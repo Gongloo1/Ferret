@@ -41,5 +41,5 @@ Search a folder instantly straight from the terminal:
 ```bash
 cargo run -- "your_search_pattern" "./target_directory"
 ```
-## 📄 License
+## License
 This project is licensed under the MIT License.
