@@ -5,8 +5,8 @@
 ██╔════╝██╔════╝██╔══██╗██╔══██╗██╔════╝╚══██╔══╝
 █████╗  █████╗  ██████╔╝██████╔╝█████╗     ██║   
 ██╔══╝  ██╔══╝  ██╔══██╗██╔═══╝ ██╔══╝     ██║   
-██║     ███████╗██║  ██║██║     ██████╗   ██║   
-╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚═════╝   ╚═╝   
+██║     ███████╗██║  ██║██║     ██████╗    ██║   
+╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚═════╝    ╚═╝   
 ```
 
 **FERRET** — A blazing fast, multi-threaded command-line search utility built with Rust. It uses zero-copy memory mapping (`memmap2`) and data parallelism (`rayon`) to scan massive folders for matching text across all CPU cores instantly.
