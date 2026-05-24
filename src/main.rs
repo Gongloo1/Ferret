@@ -51,17 +51,14 @@ struct SearchConfig {
 
 fn main() {
     // 1. SIGNAL HANDLING: Intercept Ctrl+C immediately
-    // An Arc<AtomicBool> lets us communicate cross-threads without locks or unsafe blocks
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     
     if let Err(_) = ctrlc::set_handler(move || {
-        // Flick the flag to false so worker threads drop active execution
         r.store(false, Ordering::SeqCst);
         let stdout = io::stdout();
         let mut handle = stdout.lock();
         let _ = writeln!(handle, "\n[!] Operation cancelled by user.");
-        // 130 is the system standard exit code for a Ctrl+C break (128 + SIGINT signum 2)
         process::exit(130); 
     }) {
         eprintln!("Error: Could not initialize OS signal handlers.");
@@ -80,28 +77,27 @@ fn main() {
                 match toml::from_str::<Config>(&content) {
                     Ok(config) => {
                         if let Some(search) = config.search {
-                            // CLI explicit arguments always take precedence over configuration file variables
                             if pattern.is_none() { pattern = search.pattern; }
                             if path.is_none() { path = search.path; }
                         }
                     }
                     Err(e) => {
                         eprintln!("Error: Configuration file formatting is invalid: {}", e);
-                        process::exit(exitcode::CONFIG); // Exits with 78
+                        process::exit(exitcode::CONFIG);
                     }
                 }
             }
             Err(e) => {
                 eprintln!("Error: Unable to access configuration file: {}", e);
-                process::exit(exitcode::NOINPUT); // Exits with 66
+                process::exit(exitcode::NOINPUT);
+                    }
+                }
             }
-        }
-    }
 
     // 4. INTERACTIVE MODE: Prompt if arguments are missing
     if pattern.is_none() || path.is_none() {
         print_banner();
-        println!(); // Spacing alignment
+        println!(); 
 
         if pattern.is_none() {
             print!("> Enter search pattern: ");
@@ -121,21 +117,24 @@ fn main() {
             io::stdin().read_line(&mut input).unwrap();
             let trimmed = input.trim().to_string();
             if !trimmed.is_empty() {
-                path = Some(PathBuf::from(trimmed));
+                // Normalize slashes based on the running OS environment
+                path = Some(normalize_path_string(&trimmed));
             }
         }
     }
 
     // Double-check that we successfully got a target pattern and path from somewhere
-    let (final_pattern, final_path) = match (pattern, path) {
+    let (final_pattern, mut final_path) = match (pattern, path) {
         (Some(p), Some(t)) => (p, t),
         _ => {
             eprintln!("Error: Missing required search variables.");
             eprintln!("Provide a pattern and path via CLI arguments or configure them inside a TOML file.");
-            process::exit(exitcode::USAGE); // Exits with 64
+            process::exit(exitcode::USAGE);
         }
     };
 
+    // Clean up CLI or Config paths to match the host OS architecture
+    final_path = normalize_path_buf(final_path);
     let pattern_bytes = final_pattern.as_bytes();
 
     // 5. COLLECT FILES VIA TRAVERSAL
@@ -146,7 +145,6 @@ fn main() {
         .map(|e| e.into_path())
         .collect();
 
-    // Atomic tracker to count if matches are found across background threads safely
     let match_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let match_counter = match_count.clone();
 
@@ -154,7 +152,6 @@ fn main() {
 
     // 6. PARALLEL EXECUTION WITH ASYNC EXIT LOOPS
     files.par_iter().for_each(|file_path| {
-        // Check our signal handler before starting work on a new file handle
         if !running.load(Ordering::SeqCst) {
             return;
         }
@@ -168,9 +165,8 @@ fn main() {
 
     // 7. FINALIZE STATUS CODES DETERMINATION
     if match_count.load(Ordering::SeqCst) > 0 {
-        process::exit(exitcode::OK); // Exits with 0
+        process::exit(exitcode::OK);
     } else {
-        // Standard grep behavior dictates returning 1 if execution was fine but nothing was found
         process::exit(1); 
     }
 }
@@ -183,12 +179,18 @@ fn search_in_file(file_path: &PathBuf, pattern: &[u8]) -> Result<bool> {
     let mut line_num = 1;
     let mut found_match = false;
     
-    for line in file_bytes.split_str(b"\n") {
+    for mut line in file_bytes.split_str(b"\n") {
+        // Cross-Platform Polish: Strip trailing Windows carriage returns (\r) if present
+        if line.ends_with(b"\r") {
+            line = &line[..line.len() - 1];
+        }
+
         if line.contains_str(pattern) {
             found_match = true;
             let stdout = io::stdout();
             let mut handle = stdout.lock();
 
+            // Display path cleanly with correct system slashes 
             let _ = write!(handle, "{}:{}: {}", file_path.display(), line_num, line.to_str_lossy());
             if !line.ends_with(b"\n") {
                 let _ = writeln!(handle);
@@ -203,4 +205,23 @@ fn search_in_file(file_path: &PathBuf, pattern: &[u8]) -> Result<bool> {
 fn print_banner() {
     println!("{}{}{}", GRAY_START, BANNER, COLOR_RESET);
     println!("{}", SUBTITLE);
+}
+
+/// Helper to sanitize a path string into an OS-appropriate PathBuf layout
+fn normalize_path_string(path_str: &str) -> PathBuf {
+    let normalized = if cfg!(windows) {
+        path_str.replace('/', "\\")
+    } else {
+        path_str.replace('\\', "/")
+    };
+    PathBuf::from(normalized)
+}
+
+/// Helper to ensure PathBuf structures loaded via TOML or CLI are normalized for the current OS
+fn normalize_path_buf(path: PathBuf) -> PathBuf {
+    if let Some(path_str) = path.to_str() {
+        normalize_path_string(path_str)
+    } else {
+        path
+    }
 }
